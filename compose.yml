@@ -1,0 +1,39 @@
+services:
+  web:
+    build: .
+    image: docker-todo-app
+    container_name: go-app-dev
+    command: go run main.go
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postres-db:
+          condition: service_healthy  #依存先のサービスが起動し, healthcheckが通ったら起動する
+    volumes:
+      - ./app:/go/src/app
+    tty: true
+    environment:
+      - TZ=Asia/Tokyo
+    restart:
+      on-failure #サービスが失敗した場合, 再起動する
+  postres-db:
+    image: postgres:16.6
+    container_name: postgres-16
+    command: -c 'config_file=/etc/postgresql/postgresql.conf'
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: always   #コンテナを自動的に開始
+    volumes:
+      - ./db_data:/var/lib/postgresql/data
+      - ./init-script:/docker-entrypoint-initdb.d #起動時にSQLを実行する(volume作成済みであればSkip)
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: pg_isready
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  db_data:
