@@ -7,18 +7,19 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
-      postres-db:
+      postgres:
           condition: service_healthy  #依存先のサービスが起動し, healthcheckが通ったら起動する
     volumes:
       - ./app:/go/src/app
     tty: true
     environment:
       - TZ=Asia/Tokyo
+      - DATABASE_URL=${DATABASE_URL}
     restart:
       on-failure #サービスが失敗した場合, 再起動する
-  postres-db:
+  postgres:
     image: postgres:16.6
-    container_name: postgres-16
+    container_name: postgres16
     command: -c 'config_file=/etc/postgresql/postgresql.conf'
     ports:
       - "127.0.0.1:5432:5432"

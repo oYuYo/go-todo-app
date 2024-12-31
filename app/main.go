@@ -1,91 +1,214 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 )
 
-// album represents data about a record album
-type album struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Artist string  `json:"artist"`
-	Price  float64 `json:"price"`
+type task struct {
+	Id                 string    `json:"task_id"`
+	TaskName           string    `json:"task_name"`
+	Description        string    `json:"description"`
+	Status             string    `json:"status"`
+	DueDate            time.Time `json:"duedate"`
+	CompletionDateTime time.Time `json:"completion_datetime"`
+	CreatedDateTime    time.Time `json:"created_datetime"`
+	ModifiedDateTIme   time.Time `json:"modified_datetime"`
 }
 
-var albums = []album{
-	{ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
-	{ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
-	{ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
-}
+func dbConn() *sql.DB {
 
-func getAlbums(c *gin.Context) {
-	// albums slice to seed record album data.
-	c.IndentedJSON(http.StatusOK, albums)
-}
+	sqldb, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 
-func getAlbumById(c *gin.Context) {
-	id := c.Param("id")
-
-	for _, a := range albums {
-		if a.ID == id {
-			c.IndentedJSON(http.StatusOK, a)
-			return
-		}
+	if err != nil {
+		log.Fatal("Couldn't open database :", err)
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+	log.Print("Opened database.")
+
+	return sqldb
 }
 
-func postAlbums(c *gin.Context) {
-	var newAlbum album
+func dbPing(db *sql.DB) {
+	if err := db.Ping(); err != nil {
+		log.Printf("Database ping error :%v", err)
+	}
+}
 
-	if err := c.BindJSON(&newAlbum); err != nil {
+func getTasks(c *gin.Context) {
+	var tasks []task
+
+	db := dbConn()
+	defer db.Close()
+
+	//dbPing(db)
+
+	rows, err := db.Query("select * from tasks;")
+	if err != nil {
+		log.Print("Couldn't get tasks :", err)
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Couldn't get tasks"})
 		return
 	}
-	albums = append(albums, newAlbum)
-	c.IndentedJSON(http.StatusCreated, newAlbum)
+	defer rows.Close()
 
-}
+	for rows.Next() {
+		var id, taskName, description, status string
+		var dudate, createdDatetime time.Time
+		var completionDatetime, modifiedDatetime sql.NullTime
 
-func deleteAlbumById(c *gin.Context) {
-	id := c.Param("id")
-
-	for i, a := range albums {
-		if a.ID == id {
-			albums = append(albums[:i], albums[i+1:]...)
-			c.IndentedJSON(http.StatusOK, albums)
-			return
+		if err := rows.Scan(&id, &taskName, &description, &status, &dudate, &completionDatetime, &createdDatetime, &modifiedDatetime); err != nil {
+			log.Print("Failed to row scan :", err)
 		}
+		fmt.Printf("ID:%s, task:%s, desc:%s, stas:%s, duedate:%s, completion:%s, created:%s, modified:%s", id, taskName, description, status, dudate, completionDatetime.Time, createdDatetime, modifiedDatetime.Time)
+
+		task := task{id, taskName, description, status, dudate, completionDatetime.Time, createdDatetime, modifiedDatetime.Time}
+		tasks = append(tasks, task)
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "failed to delete because album not found"})
-}
 
-func updateAlbumById(c *gin.Context) {
-	var newAlbum album
-
-	if err := c.BindJSON(&newAlbum); err != nil {
+	if err := rows.Err(); err != nil {
+		log.Print("Error occurred in row scanning :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in row scanning"})
 		return
 	}
 
+	c.IndentedJSON(http.StatusOK, tasks)
+}
+
+func getTaskById(c *gin.Context) {
 	id := c.Param("id")
-	for i, a := range albums {
-		if a.ID == id {
-			albums[i] = newAlbum
-			c.IndentedJSON(http.StatusOK, albums)
+
+	db := dbConn()
+	defer db.Close()
+
+	row := db.QueryRow("select * from tasks where task_id=$1;", id)
+
+	var taskName, description, status string
+	var dudate, createdDatetime time.Time
+	var completionDatetime, modifiedDatetime sql.NullTime
+
+	err := row.Scan(&id, &taskName, &description, &status, &dudate, &completionDatetime, &createdDatetime, &modifiedDatetime)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Print("Couldn't find specified task :", err)
+			c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Couldn't find specified task"})
 			return
 		}
+		log.Print("Error occurred in row scanning :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in row scanning"})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+	task := task{id, taskName, description, status, dudate, completionDatetime.Time, createdDatetime, modifiedDatetime.Time}
+	c.IndentedJSON(http.StatusOK, task)
+}
+
+func postTask(c *gin.Context) {
+	var newTask task
+
+	if err := c.BindJSON(&newTask); err != nil {
+		log.Print("Invalid task params :", err)
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid task parameters"})
+		return
+	}
+
+	db := dbConn()
+	defer db.Close()
+
+	_, err := db.Exec("insert into tasks(task_name, description, duedate) values($1, $2, $3);", newTask.TaskName, newTask.Description, newTask.DueDate)
+	if err != nil {
+		log.Print("Error occurred in insert task :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in insert task"})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, newTask)
+}
+
+func deleteTaskById(c *gin.Context) {
+	id := c.Param("id")
+
+	db := dbConn()
+	defer db.Close()
+
+	_, err := db.Exec("delete from tasks where task_id=$1;", id)
+	if err != nil {
+		log.Print("Error occurred in deleting task :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in deleting task"})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"message": "Succeed to delete task"})
+}
+
+func updateTaskById(c *gin.Context) {
+	id := c.Param("id")
+
+	var updatedTask task
+
+	if err := c.BindJSON(&updatedTask); err != nil {
+		log.Print("Invalid task params :", err)
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid task parameters"})
+		return
+	}
+
+	db := dbConn()
+	defer db.Close()
+
+	_, err := db.Exec(`update tasks 
+							set task_name=$1
+							, description=$2
+							, status=$3
+							, duedate=$4
+							, completion_datetime=$5
+							, modified_datetime=current_timestamp
+						where task_id=$6;`,
+		updatedTask.TaskName,
+		updatedTask.Description,
+		updatedTask.Status,
+		updatedTask.DueDate,
+		updatedTask.CompletionDateTime,
+		id)
+
+	if err != nil {
+		log.Print("Error occurred in updating task :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in updating task"})
+		return
+	}
+
+	row := db.QueryRow("select * from tasks where task_id=$1;", updatedTask.Id)
+
+	var taskName, description, status string
+	var dudate, createdDatetime time.Time
+	var completionDatetime, modifiedDatetime sql.NullTime
+
+	err = row.Scan(&id, &taskName, &description, &status, &dudate, &completionDatetime, &createdDatetime, &modifiedDatetime)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Print("Couldn't find specified task :", err)
+			c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Couldn't find specified task"})
+			return
+		}
+		log.Print("Error occurred in row scanning :", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error occurred in row scanning"})
+		return
+	}
+	newTask := task{id, taskName, description, status, dudate, completionDatetime.Time, createdDatetime, modifiedDatetime.Time}
+	c.IndentedJSON(http.StatusOK, newTask)
 }
 
 func main() {
+
 	router := gin.Default()
-	router.GET("/albums", getAlbums)
-	router.GET("/album/:id", getAlbumById)
-	router.POST("/albums", postAlbums)
-	router.DELETE("/delete/:id", deleteAlbumById)
-	router.PUT("/album/:id", updateAlbumById)
+	router.GET("/tasks", getTasks)
+	router.GET("/task/:id", getTaskById)
+	router.POST("/task", postTask)
+	router.DELETE("/task/:id", deleteTaskById)
+	router.PUT("/task/:id", updateTaskById)
 
 	router.Run(":8080")
 
