@@ -26,7 +26,6 @@ type task struct {
 func dbConn() *sql.DB {
 
 	sqldb, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
-
 	if err != nil {
 		log.Fatal("Couldn't open database :", err)
 	}
@@ -201,8 +200,7 @@ func updateTaskById(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, newTask)
 }
 
-func main() {
-
+func setupRouter() *gin.Engine {
 	router := gin.Default()
 	router.GET("/tasks", getTasks)
 	router.GET("/task/:id", getTaskById)
@@ -210,6 +208,10 @@ func main() {
 	router.DELETE("/task/:id", deleteTaskById)
 	router.PUT("/task/:id", updateTaskById)
 
-	router.Run(":8080")
+	return router
+}
 
+func main() {
+	router := setupRouter()
+	router.Run(":8080")
 }

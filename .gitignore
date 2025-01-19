@@ -1,3 +1,4 @@
+.vscode
 .env
 db_data
 init-script
